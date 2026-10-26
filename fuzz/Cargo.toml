@@ -25,7 +25,7 @@ libfuzzer-sys = "0.4"
 # Default features = the pure wire core (bencode / krpc codec / metadata parsing).
 # No `net` or `rand`, so no tokio/getrandom in the fuzz build.
 [dependencies.torrentds]
-path = "../crates/torrentds"
+path = ".."
 
 # Detach from the parent engine workspace: this makes the fuzz crate its own
 # workspace root so `cargo fuzz` never climbs up to `../Cargo.toml`.
