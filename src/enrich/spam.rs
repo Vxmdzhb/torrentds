@@ -223,10 +223,10 @@ pub fn score(
     // -- size vs piece mismatch --
     if piece_length > 0 && piece_count > 0 && total_size > 0 {
         let expected = total_size.div_ceil(piece_length);
-        // abs_diff over u64 (both operands non-negative): a hostile `total_size`
-        // near u64::MAX with `piece_length == 1` makes `expected` exceed i64::MAX,
-        // where the old `as i64` subtraction overflow-panicked (debug) / wrapped to
-        // a false-negative (release). The info-dict is attacker-crafted.
+        // abs_diff over u64 (both operands non-negative): a hostile `total_size` near
+        // u64::MAX with `piece_length == 1` pushes `expected` past i64::MAX, where an
+        // `as i64` subtraction would panic (debug) or wrap to a false negative
+        // (release). The info-dict is attacker-crafted.
         if expected >= 1 && (piece_count as u64).abs_diff(expected) > 2 {
             let ratio = piece_count as f64 / expected as f64;
             if ratio > config.mismatch_factor || ratio < 1.0 / config.mismatch_factor {
@@ -368,12 +368,9 @@ mod tests {
         assert!(dom("my-tracker.org"));
     }
 
-    /// Regression: a hostile info-dict with a colossal `total_size` and
-    /// `piece_length == 1` drives `expected` past `i64::MAX`. The old
-    /// `(piece_count as i64 - expected as i64)` subtraction overflow-panicked in
-    /// debug and wrapped to a false-negative in release; the `abs_diff` over
-    /// `u64` must neither panic nor miss the mismatch. Tests run in debug, so a
-    /// regression here surfaces as a panic (test failure), not a silent pass.
+    /// A hostile info-dict with a huge `total_size` and `piece_length == 1` pushes
+    /// `expected` past `i64::MAX`. `abs_diff` over `u64` must neither panic nor
+    /// miss the mismatch. Tests run in debug, so a regression shows up as a panic.
     #[test]
     fn piece_mismatch_hostile_size_no_overflow() {
         let cfg = SpamConfig::default();

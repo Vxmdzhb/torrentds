@@ -47,12 +47,12 @@ pub use crate::spam::DEFAULT_THRESHOLD as DEFAULT_SPAM_THRESHOLD;
 /// fetches, ~15 s each) and bounds the queue at ~17 MiB.
 pub const MAX_DISCOVERED: usize = 100_000;
 
-/// How long an un-fetched discovery row is worth keeping, in seconds.
+/// How long an unfetched discovery row is kept, in seconds.
 ///
-/// The peer that announced an infohash is gone long before this; without an age
-/// bound a row that is never attempted (there is always newer work) is immortal,
-/// which is what let a spoofed-source `get_peers` flood become permanent
-/// residency. Enforced by [`Store::prune_discovered`].
+/// The peer that announced an infohash is long gone by then. Without an age
+/// limit, a row that is never attempted (there is always newer work) would
+/// live forever, and a spoofed-source `get_peers` flood would stay resident.
+/// Enforced by [`Store::prune_discovered`].
 pub const DISCOVERED_TTL: u64 = 86_400;
 
 // (extension, category) table — flattened from Python's `_CATEGORY_EXT`.
@@ -400,23 +400,16 @@ impl Default for Store {
     }
 }
 
-/// One queue row's selection key: fewest attempts, then oldest, then hex — the
-/// same total order, over the same tuple, that the full sort this replaced used.
+/// One queue row's selection key: fewest attempts, then oldest, then hex.
 ///
-/// In a shipped build this IS that bare tuple. The alias is the whole of the
-/// definition, the selection builds a tuple and puts it in the heap exactly as
-/// it always did, and none of the `cfg(test)` items below are compiled: same
-/// types, same ordering, no counter, no wrapper, no allocation. Checked, not assumed — `target/release/
-/// torrentds` hashes the same as a line-for-line tuple baseline of this file.
+/// In a release build this is just that tuple: none of the `cfg(test)` items
+/// below are compiled, so there's no counter, no wrapper and no allocation.
 ///
-/// Under `cfg(test)` it is instead a wrapper whose `Ord` tallies every
-/// comparison: the selection loop's own peek AND the ones `BinaryHeap` makes
-/// inside `push`/`pop`, which are most of the work and cannot be seen from the
-/// loop. That is the whole reason for the wrapper. The counter used to sit in
-/// the loop, one tick per non-skipped row, where it reads exactly `n` for *any*
-/// body under that loop — it could not tell this implementation from one that
-/// re-sorts the whole heap on every iteration, and the review confirmed that
-/// mutation left the count at 40 000 with the test still green.
+/// Under `cfg(test)` it's a wrapper whose `Ord` counts every comparison,
+/// including the ones `BinaryHeap` makes inside `push`/`pop`, which are most
+/// of the work and invisible from the loop. A counter in the loop itself
+/// would read exactly `n` for any loop body, so it couldn't tell this from an
+/// implementation that re-sorts the heap on every iteration.
 #[cfg(not(test))]
 type SelectRow<'a> = (u32, u64, &'a str);
 
@@ -440,19 +433,16 @@ impl PartialOrd for SelectRow<'_> {
     }
 }
 
-// Ordering comparisons performed by `Store::pending_infohashes`, for
+// Ordering comparisons made by `Store::pending_infohashes`, for
 // `pending_infohashes_matches_a_full_sort`.
 //
-// The selection being cheaper than the full sort it replaced is a fact about how
-// much work each algorithm does, so it is counted rather than timed: selecting
-// 80 rows out of 40 000 is a sub-millisecond window that one scheduler
-// preemption on a loaded CI runner can double, which is how the old wall-clock
-// ratio failed while the code was correct.
+// Being cheaper than a full sort is a claim about how much work each
+// algorithm does, so it's counted, not timed: selecting 80 rows out of 40 000
+// takes under a millisecond, which one preemption on a busy runner can
+// double.
 //
-// Thread-local and not a process-wide static because the test binary runs its
-// tests in parallel threads in one process, where a global would move under
-// unrelated tests. The whole thing exists only under `#[cfg(test)]`, so the
-// shipped build has neither the counter nor the `SelectRow` wrapper at all.
+// Thread-local rather than a global, because the test binary runs tests in
+// parallel threads of one process. Only exists under `#[cfg(test)]`.
 #[cfg(test)]
 thread_local! {
     /// This thread's running comparison count.
@@ -476,18 +466,14 @@ fn take_select_cmps() -> u64 {
 // `SearchResult`s built by `Store::to_result`, for
 // `search_pages_before_materialising`.
 //
-// Same reasoning as the selection counter above. Paging before materialising is
-// a claim about how many rows the search builds, so it is counted rather than
-// timed: the old test compared the wall clock of a `limit=1` search against a
-// `limit=N` one, and CPU contention on a loaded runner adds roughly the same
-// number of milliseconds to BOTH sides, which destroys a ratio however many
-// samples it takes the best of. It failed 3 times in 50 full-suite runs with the
-// code working, once with the `limit=1` side the slower of the two.
+// Same reasoning as the selection counter above: paging before
+// materialising is a claim about how many rows the search builds, so it's
+// counted, not timed. CPU contention adds about the same milliseconds to both
+// sides of a timed comparison, which ruins the ratio.
 //
-// Thread-local and not a process-wide static because the test binary runs its
-// tests in parallel threads in one process, where a global would move under
-// unrelated tests — several of which search. The whole thing exists only under
-// `#[cfg(test)]`, so the shipped build materialises rows without it.
+// Thread-local rather than a global, because the test binary runs tests in
+// parallel threads of one process, several of which search. Only exists
+// under `#[cfg(test)]`.
 #[cfg(test)]
 thread_local! {
     /// This thread's running count of materialised rows.
@@ -646,9 +632,8 @@ impl Store {
             if d.fetched || d.attempts >= max_attempts {
                 continue;
             }
-            // Same total order as the old sort: fewest attempts, then oldest, then
-            // hex (which is how the BTreeMap already iterates, so stable-sort ties
-            // resolved this way too).
+            // Fewest attempts, then oldest, then hex (the BTreeMap's own iteration order,
+            // so ties resolve the same way too).
             let row = (d.attempts, d.first_seen, ih.as_str());
             // Test builds only: wrap the row so that every comparison of two of
             // them — the peek below, and every sift inside the heap — is counted.
@@ -688,13 +673,10 @@ impl Store {
         }
     }
 
-    /// Drop fetched, attempt-exhausted, or expired queue rows. Returns the count
-    /// removed.
+    /// Drop fetched, attempt-exhausted or expired queue rows. Returns how many.
     ///
-    /// The age check ([`DISCOVERED_TTL`]) is what makes this able to shrink at all
-    /// under a flood: the old predicate (`!fetched && attempts < max`) retains a
-    /// row that was never attempted forever, so 1M rows queued by spoofed-source
-    /// `get_peers` datagrams survived every prune (measured: 0 removed).
+    /// The age check ([`DISCOVERED_TTL`]) is what lets the queue shrink under a
+    /// flood: without it, a row that was never attempted would be kept forever.
     pub fn prune_discovered(&mut self, max_attempts: u32, now: u64) -> usize {
         let cutoff = now.saturating_sub(DISCOVERED_TTL);
         let before = self.discovered.len();
@@ -1678,11 +1660,10 @@ mod tests {
         assert_eq!(s.len(), 3);
     }
 
-    /// Regression: the query-token count must be capped. `search`/`count` are
-    /// O(tokens × corpus) under the store mutex, and ~4000 tokens fit in one HTTP
-    /// request line (32 768-byte head limit) — measured at 20.2 s of server CPU
-    /// for a single GET over 20 000 torrents, blocking `/health` for 14.9 s.
-    /// Before the fix `query_tokens` returned all 4000.
+    /// The number of query tokens must be capped. `search`/`count` are
+    /// O(tokens × corpus) under the store mutex, and ~4000 tokens fit in one
+    /// request line (32 768-byte head limit): measured at 20.2 s of CPU for one GET
+    /// over 20 000 torrents, blocking `/health` for 14.9 s.
     #[test]
     fn query_token_count_is_capped() {
         let flood = (0..4000)
@@ -1707,10 +1688,9 @@ mod tests {
         );
     }
 
-    /// Regression: with no candidates there is nothing to score, so the corpus
-    /// scan `doc_freqs` performs (one full pass per query token, mutex held) must
-    /// not run at all — it ran unconditionally, which is where most of the 20.2 s
-    /// of the token-flood GET was spent even when filters matched nothing.
+    /// With no candidates there's nothing to score, so the corpus scan in
+    /// `doc_freqs` (one full pass per query token, mutex held) must not run at
+    /// all.
     #[test]
     fn doc_freqs_skips_corpus_scan_without_candidates() {
         let mut s = Store::new();
@@ -1722,10 +1702,9 @@ mod tests {
         assert_eq!(s.doc_freqs(&qtokens, &[&ih]), vec![1.0, 1.0]);
     }
 
-    /// Regression: the discovery queue must be bounded. It is fed by every inbound
-    /// `get_peers` (no token, no handshake, spoofable source), ~170 B retained per
-    /// 95-byte datagram — 1M rows = 163 MiB — and `prune_discovered` removed none
-    /// of them because a never-attempted row satisfied its retain predicate.
+    /// The discovery queue must be bounded. Every inbound `get_peers` feeds it (no
+    /// token, no handshake, spoofable source), at ~170 B per 95-byte datagram:
+    /// 1M rows would be 163 MiB.
     #[test]
     fn discovery_queue_is_capped_and_evicts_least_useful() {
         let mut s = Store::new();
@@ -1753,9 +1732,8 @@ mod tests {
         );
     }
 
-    /// Regression: a never-attempted queue row must eventually expire. The old
-    /// predicate (`!fetched && attempts < max`) kept it forever, so a spoofed
-    /// `get_peers` flood took permanent residency (0 of 1M rows pruned).
+    /// A queue row that's never attempted must still expire, or a spoofed
+    /// `get_peers` flood would stay resident forever.
     #[test]
     fn prune_discovered_expires_never_attempted_rows() {
         let mut s = Store::new();
@@ -1789,7 +1767,7 @@ mod tests {
             }
         }
         s.mark_fetched(&ih_of(3));
-        // Reference: the old full-sort implementation.
+        // Reference: a full sort.
         let mut rows: Vec<(&String, &Discovered)> = s
             .discovered
             .iter()
@@ -1813,25 +1791,18 @@ mod tests {
         assert_eq!(got, expect);
         assert!(s.pending_infohashes(0, 3).is_empty());
 
-        // …and it must cost materially less than that full sort. The dispatcher
-        // runs this every 200 ms–1 s holding the store mutex, so at 1M rows the
-        // 36.7 ms sort was also 36.7 ms of blocked inbound harvesting per tick.
+        // …and it must cost clearly less than a full sort. The dispatcher runs this
+        // every 200 ms–1 s holding the store mutex, so at 1M rows a 36.7 ms sort
+        // would block inbound harvesting for 36.7 ms per tick.
         //
-        // Counted, not timed. This used to assert `heap_time * 2 < sort_time`
-        // from a single sample of each side, and selecting 80 rows out of 40 000
-        // takes a few hundred microseconds — a window one scheduler preemption
-        // doubles, so on a loaded 2-core runner the test failed with the code
-        // working. Comparison counts are a property of the two algorithms and of
-        // nothing else. What this does NOT measure is wall-clock cost: the sort
-        // also materialises a 40 000-row Vec the selection never builds, so the
-        // real gap is wider than the comparison ratio.
+        // Counted, not timed: comparison counts are a property of the two
+        // algorithms, while a few hundred microseconds of wall clock are at the
+        // mercy of the scheduler. This doesn't measure wall-clock cost; the sort also
+        // builds a 40 000-row Vec the selection never does, so the real gap is wider.
         //
         // `heap_cmps` counts every comparison of two `SelectRow`s, the heap's own
-        // `push`/`pop` sifts included, because the counter lives in
-        // `SelectRow::cmp`. It deliberately does not live in the selection loop:
-        // one tick per non-skipped row reads exactly `n` for any body under that
-        // loop, and so cannot tell this implementation from one that re-sorts the
-        // whole heap on every iteration.
+        // sifts included, because the counter lives in `SelectRow::cmp` rather than
+        // in the selection loop (see `SelectRow`).
         const QUEUED: u32 = 40_000;
         let mut big = Store::new();
         for i in 0..QUEUED {
@@ -1889,12 +1860,11 @@ mod tests {
         );
     }
 
-    /// Regression: `search` must page BEFORE materialising. Every candidate used
-    /// to be cloned into a `SearchResult` (six `String`s + a freshly formatted
-    /// magnet) and only then were `offset`/`limit` applied, so `/recent?limit=1`
-    /// over 20 000 torrents took 174 ms and built 20 000 rows to return one.
-    /// Asserted by counting the rows the search builds, which is ~the corpus size
-    /// without the fix and exactly the page size with it.
+    /// `search` must page before materialising: building a full `SearchResult`
+    /// (six `String`s and a formatted magnet) for every candidate and then
+    /// applying `offset`/`limit` made `/recent?limit=1` over 20 000 torrents take
+    /// 174 ms. Asserted by counting the rows built: the page size, not the corpus
+    /// size.
     #[test]
     fn search_pages_before_materialising() {
         let mut s = Store::new();
@@ -1921,19 +1891,10 @@ mod tests {
             include_spam: true,
             ..Default::default()
         };
-        // Same corpus, same ordering, same filters — only the page size differs,
-        // so the difference in rows built is exactly the per-row materialisation
-        // the fix skips.
-        //
-        // Counted, not timed. This used to time a `limit=1` search against a
-        // `limit=N` one (best of five each) and require a 3× gap. On a loaded
-        // 2-core runner that failed 3 times in 50 full-suite runs with the code
-        // working, because contention adds roughly the same number of
-        // milliseconds to both sides and an additive term destroys a ratio:
-        // `one=112 ms vs all=289 ms` was one failure, and `one=131 ms vs
-        // all=29 ms` another, where the one-row page came back slower than the
-        // full one. How many rows the search builds depends on the search and on
-        // nothing else.
+        // Same corpus, ordering and filters; only the page size differs, so the
+        // difference in rows built is exactly the per-row work paging first skips.
+        // Counted rather than timed, since the number of rows built depends on the
+        // search and nothing else.
         take_materialised(); // discard anything the corpus build counted
         let one = s.search("", 1, 0, Order::Latest, &f, false);
         let one_built = take_materialised();
@@ -1941,11 +1902,10 @@ mod tests {
         let all_built = take_materialised();
         assert_eq!(one.len(), 1);
         assert_eq!(all.len(), N as usize);
-        // Exact counts on both sides, not a ratio. `all_built == N` is what keeps
-        // `one_built == 1` from passing vacuously: a search that stopped
-        // materialising rows at all, or a counter that stopped firing, would
-        // report 0 for both and satisfy any inequality. Materialising the whole
-        // result set and paging afterwards — the bug — makes `one_built` N.
+        // Exact counts on both sides, not a ratio. `all_built == N` keeps
+        // `one_built == 1` from passing vacuously: a search that stopped building
+        // rows, or a counter that stopped firing, would report 0 for both.
+        // Materialising everything and paging afterwards would make `one_built` N.
         assert_eq!(
             one_built, 1,
             "limit=1 built {one_built} rows to return one row — {N} means the \
@@ -1962,7 +1922,7 @@ mod tests {
         // `String` clones and a percent-encoded magnet, so the time saved is
         // larger than the row ratio, but it is not what makes the test pass.
 
-        // Paging is unchanged: page 2 of 2 is the same row the old skip/take gave.
+        // Paging is unchanged: page 2 of 2 is the expected row.
         let page = s.search("", 2, 2, Order::Latest, &f, true);
         let head = s.search("", 4, 0, Order::Latest, &f, true);
         assert_eq!(
@@ -1971,11 +1931,10 @@ mod tests {
         );
     }
 
-    /// Regression: a non-empty query that tokenises to nothing (all
-    /// punctuation) must match NOTHING. The bug was that `qtokens.is_empty()`
-    /// alone conflated "no query → browse everything" with "query matched no
-    /// terms", so `search("!!!")` returned the entire index. Both `search` and
-    /// `count` must early-return empty/0, while an empty query still browses.
+    /// A non-empty query that tokenises to nothing (all punctuation) must match
+    /// nothing. "No query" (browse everything) and "a query with no terms" are
+    /// different: both `search` and `count` must return empty/0 for the latter,
+    /// while an empty query still browses.
     #[test]
     fn punctuation_only_query_matches_nothing() {
         let mut s = Store::new();

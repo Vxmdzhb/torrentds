@@ -594,12 +594,10 @@ mod tests {
         assert!(!peers.contains(&ep("1.1.1.1:1")));
     }
 
-    /// Regression: a swarm with no peers left must expire even if it once counted
-    /// a `completed`. The old retain predicate kept every swarm with
-    /// `downloaded > 0` forever, so 200 000 `GET /announce?info_hash=<random 20B>
-    /// &port=6881&event=completed` requests bought 200 000 permanent swarms — and
-    /// every later announce then paid to scan them (4.4 ms per reap, four reaps
-    /// per HTTP announce).
+    /// A swarm with no peers left must expire even if it once counted a
+    /// `completed`. Otherwise 200 000 `GET /announce?info_hash=<random 20B>
+    /// &port=6881&event=completed` requests would create 200 000 permanent
+    /// swarms, and every later announce would pay to scan them.
     #[test]
     fn peerless_swarm_expires_even_after_completed() {
         let mut ps = PeerStore::with_bounds(5, 10, 50, 100, 100); // peer_ttl = 10
@@ -610,10 +608,10 @@ mod tests {
         assert_eq!(ps.swarm_count(), 0, "an emptied swarm outlived its peers");
     }
 
-    /// Regression: the full sweep must be amortised, not run on every call. One
-    /// HTTP announce reaches the store four times (announce, counts, get_peers ×2)
-    /// and a sweep is O(swarms) — 4.4 ms at 200 000 swarms, ~88 ms per request at
-    /// the 1M cap (~11 req/s). The swarm a call actually touches is still exact.
+    /// The full sweep must be amortised, not run on every call. One HTTP announce
+    /// reaches the store four times (announce, counts, get_peers ×2), and a sweep
+    /// is O(swarms): 4.4 ms at 200 000 swarms, ~88 ms per request at the 1M cap.
+    /// The swarm a call touches is still exact.
     #[test]
     fn full_sweep_is_amortised_but_still_happens() {
         let mut ps = PeerStore::with_bounds(5, 10, 50, 100, 100); // peer_ttl = 10

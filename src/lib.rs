@@ -1,30 +1,30 @@
-//! torrentds — DHT torrent-metadata indexer + tracker (Rust rewrite).
+//! torrentds: DHT torrent-metadata indexer and tracker.
 //!
-//! This crate hosts the byte-exact BitTorrent wire core: a canonical bencode
-//! codec whose STRICT decoder is hardened against hostile input from anonymous
-//! DHT peers (it returns `Result`, never panics), and the infohash (SHA-1 of the
-//! canonical info-dict). The DHT node (BEP-5), HTTP/UDP trackers (BEP-3/15/23)
-//! and metadata fetch (BEP-9/10) build on top of these.
+//! The core is the byte-exact BitTorrent wire layer: a canonical bencode
+//! codec whose strict decoder is hardened against hostile input from anonymous
+//! DHT peers (it returns `Result` and never panics), and the infohash (SHA-1
+//! of the canonical info-dict). The DHT node (BEP-5), HTTP/UDP trackers
+//! (BEP-3/15/23) and metadata fetch (BEP-9/10) build on top of it.
 //!
 //! # Source layout
 //!
-//! On disk the modules are grouped by subsystem — `wire/` (bencode, krpc,
+//! Modules are grouped by subsystem on disk: `wire/` (bencode, krpc,
 //! infohash), `enrich/` (classify, bep33, spam), `dht/` (routing, node,
-//! transport), `tracker/` (peerstore, http, udp), plus `metadata/` and `store`.
-//! Each is re-exported flat at the crate root, so the public path is stable and
-//! grouping-agnostic (`torrentds::bencode`, `torrentds::routing`, …).
+//! transport), `tracker/` (peerstore, http, udp), plus `metadata/` and
+//! `store`. Each is re-exported flat at the crate root, so public paths don't
+//! depend on the grouping (`torrentds::bencode`, `torrentds::routing`, …).
 //!
 //! # Feature tiers
 //!
-//! The crate is layered so its pure, auditable core carries **no third-party
-//! dependencies** — that is the default build. Live networking is opt-in:
+//! The pure core has **no third-party dependencies**; that's the default
+//! build. Live networking is opt-in:
 //!
-//! * *(default, no features)* — the pure wire core: [`bencode`], [`infohash`],
+//! * *(default, no features)*: the pure wire core: [`bencode`], [`infohash`],
 //!   [`krpc`], [`bep33`], [`classify`], [`spam`], [`store`], and all of
-//!   [`metadata`]'s parsing/builders. Zero third-party dependencies.
-//! * **`rand`** — adds the sync CSPRNG-backed structures ([`routing`] table,
+//!   [`metadata`]'s parsing and builders.
+//! * **`rand`** adds the CSPRNG-backed structures ([`routing`] table,
 //!   [`peerstore`] swarm store); pulls in `getrandom`.
-//! * **`net`** — adds the live async DHT node, the [`tracker_http`] /
+//! * **`net`** adds the live async DHT node, the [`tracker_http`] /
 //!   [`tracker_udp`] servers, the [`transport`] layer, and [`metadata`]'s
 //!   `fetch_metadata`/`serve_metadata`; pulls in `tokio` (and implies `rand`).
 #![forbid(unsafe_code)]

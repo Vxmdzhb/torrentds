@@ -622,8 +622,8 @@ impl DhtNode {
             .find_closest(target, count)
     }
 
-    /// Insert a contact (used to warm-start the table from persisted nodes). Our
-    /// own ID is never stored; returns whether it was added.
+    /// Insert a contact (to warm-start the table from saved nodes). Our own id is
+    /// never stored; returns whether it was added.
     pub fn add_contact(&self, node: Node) -> bool {
         self.state.routing.lock().unwrap().add_node(node)
     }
@@ -1059,11 +1059,10 @@ mod tests {
         assert_ne!(s.current, third);
     }
 
-    /// Regression: a token must stop working. The secret was fixed for the whole
-    /// process lifetime and `make_token` mixes only secret + source IP, so one
-    /// token harvested from a single `get_peers` was a permanent announce
-    /// credential for that IP — inject peers into any infohash, forever. After
-    /// rotation it must survive exactly one window and then be refused.
+    /// A token must stop working. Tokens mix the secret with the source IP, so
+    /// with a secret fixed for the whole process one harvested token would be a
+    /// permanent announce credential for that IP. After rotation a token must
+    /// survive exactly one window and then be refused.
     #[tokio::test]
     async fn announce_token_expires_after_two_rotations() {
         let b = DhtNode::bind(cfg()).await.unwrap();

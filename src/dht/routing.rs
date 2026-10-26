@@ -151,7 +151,7 @@ pub fn encode_nodes(nodes: &[Node]) -> Vec<u8> {
     out
 }
 
-/// Parse a compact "nodes" string; a ragged tail is silently dropped.
+/// Parse a compact "nodes" string; a ragged tail is dropped.
 pub fn decode_nodes(blob: &[u8]) -> Vec<Node> {
     let mut out = Vec::new();
     for chunk in blob.chunks_exact(26) {

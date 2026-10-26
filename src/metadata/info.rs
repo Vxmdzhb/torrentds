@@ -308,11 +308,11 @@ fn walk_tree_rec(
     Ok(())
 }
 
-/// Parse a BEP-52 v2 (or hybrid) info-dict. The v2 infohash is SHA-256 over the
-/// raw verified bytes when supplied (so a non-canonical dict still hashes right),
-/// else over a re-encode. When `dht_info_hash` is given the recomputed hash is
-/// verified against it (full 32-byte, 20-byte primary, or truncated SHA-256); a
-/// mismatch is rejected so a substitute dict is never silently accepted.
+/// Parse a BEP-52 v2 (or hybrid) info-dict. The v2 infohash is SHA-256 over
+/// the raw verified bytes when given (so a non-canonical dict still hashes
+/// correctly), otherwise over a re-encode. With `dht_info_hash`, the hash is
+/// checked against it (full 32-byte, 20-byte primary, or truncated SHA-256),
+/// and a mismatch is rejected, so a substitute dict is never accepted.
 pub fn parse_v2_info(
     info: &Dict,
     info_bytes: Option<&[u8]>,

@@ -292,15 +292,14 @@ mod tests {
         assert!(walk_file_tree(&tree).is_err());
     }
 
-    /// Regression: the `file tree` walk must bound its **output**, not just its
-    /// input. `MAX_METADATA_SIZE` / `MAX_TREE_DEPTH` / `MAX_TREE_NODES` all cap
-    /// what arrives on the wire, but each leaf re-materialises its whole key
-    /// prefix, so `{<big name>: {<many short names>: {"": {"length": 1}}}}` costs
-    /// `leaves × prefix` bytes of `String`. The 100 000-leaf / 6 MiB-name shape is
-    /// 8.19 MiB on the wire (under every input cap, and hash-consistent because
-    /// the attacker publishes its SHA-1 himself) and projects to ~585 GiB → OOM.
-    /// Here 200 leaves under a 64 KiB name = ~12.8 MiB of paths must be rejected;
-    /// before the fix this returned `Ok` with all 200 paths materialised.
+    /// The `file tree` walk must bound its **output**, not just its input.
+    /// `MAX_METADATA_SIZE`, `MAX_TREE_DEPTH` and `MAX_TREE_NODES` cap what arrives,
+    /// but each leaf repeats its whole key prefix, so
+    /// `{<big name>: {<many short names>: {"": {"length": 1}}}}` costs
+    /// `leaves × prefix` bytes. 100 000 leaves under a 6 MiB name is 8.19 MiB on
+    /// the wire (under every input cap, and hash-consistent, since the attacker
+    /// publishes the SHA-1) and would expand to ~585 GiB. Here 200 leaves under a
+    /// 64 KiB name (~12.8 MiB of paths) must be rejected.
     #[test]
     fn walk_file_tree_bounds_total_path_bytes() {
         let leaf = || {

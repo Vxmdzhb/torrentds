@@ -227,10 +227,10 @@ impl Indexer {
         let stats = self.stats.clone();
         let sink: InfohashSink = Arc::new(move |ih: &InfoHash, peer: Option<SocketAddrV4>| {
             let peer = peer.map(|a| (a.ip().to_string(), a.port()));
-            // This runs synchronously inside the DHT receive task; a panic would
-            // unwind it and silently stop that node's inbound harvest. `add_discovered`
-            // itself can't panic, and the lock is taken poison-tolerantly so a panic
-            // elsewhere while holding the store lock can't cascade to kill harvesting.
+            // This runs synchronously inside the DHT receive task, and a panic would end
+            // that node's inbound harvest. `add_discovered` can't panic, and the lock is
+            // taken poison-tolerantly, so a panic elsewhere while holding the store lock
+            // can't stop harvesting.
             store
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -291,8 +291,8 @@ impl Indexer {
     /// [`IndexerConfig::allow_internal_peers`] is set.
     pub async fn fetch_and_store(&self, infohash: InfoHash, host: &str, port: u16) -> bool {
         if !self.dialable(host) {
-            // Counted, not silently dropped: a rising `refused` is a DHT contact
-            // aiming this node at 127.0.0.1 / 10.0.0.0 / 169.254.169.254.
+            // Counted, not dropped: a rising `refused` means a DHT contact is pointing
+            // this node at 127.0.0.1 / 10.0.0.0 / 169.254.169.254.
             self.stats.refused.fetch_add(1, Ordering::Relaxed);
             self.store.lock().unwrap().mark_attempt(&infohash);
             return false;
@@ -615,12 +615,12 @@ mod tests {
         indexer.stop();
     }
 
-    /// Regression (SSRF / internal port scan): peer addresses come from a remote
-    /// DHT contact's `values` list, which `decode_endpoint` accepts as any four
-    /// bytes, so `fetch_and_store` must refuse internal/reserved addresses before
-    /// connecting. Before the fix a `get_peers` answer of `127.0.0.1:22`,
-    /// `10.0.0.5:3306`, `169.254.169.254:80` got a real 68-byte BitTorrent
-    /// handshake delivered to each — here, to a loopback-only listener.
+    /// SSRF and internal port scans: peer addresses come from a remote DHT
+    /// contact's `values` list, which `decode_endpoint` accepts as any four
+    /// bytes, so `fetch_and_store` must refuse internal and reserved addresses
+    /// before connecting. Otherwise a `get_peers` answer like `127.0.0.1:22`,
+    /// `10.0.0.5:3306` or `169.254.169.254:80` would get a real BitTorrent
+    /// handshake; here the target is a loopback-only listener.
     #[tokio::test]
     async fn refuses_internal_peer_addresses() {
         // The exact addresses from the repro's `values` list, plus a public one.

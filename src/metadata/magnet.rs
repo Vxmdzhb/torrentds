@@ -125,8 +125,8 @@ pub fn parse_magnet(uri: &str) -> Result<Magnet, MetadataError> {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         match key {
             "xt" => {
-                // Fail closed, like Python: an `xt` carrying a recognised urn that
-                // fails to decode aborts the parse rather than silently dropping it.
+                // Fail closed, like Python: an `xt` with a recognised urn that doesn't decode
+                // aborts the parse rather than being dropped.
                 let value = pct_decode(value);
                 if let Some(rest) = value.strip_prefix("urn:btih:") {
                     m.v1_infohash =

@@ -809,9 +809,9 @@ fn clamp_int(v: Option<&String>, default: usize, lo: usize, hi: usize) -> usize 
     };
     match s.parse::<i64>() {
         Ok(n) => n.clamp(lo as i64, hi as i64) as usize,
-        // Python parses arbitrary precision then clamps, so an out-of-i64
-        // magnitude (`?offset=99999999999999999999`) clamps to the bound by sign
-        // rather than silently falling back to the default (page 0).
+        // Python parses arbitrary precision and then clamps, so an out-of-i64 value
+        // (`?offset=99999999999999999999`) clamps to the bound by sign rather than
+        // falling back to the default (page 0).
         Err(_) => {
             let t = s.trim();
             let digits = |x: &str| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit());

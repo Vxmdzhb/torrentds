@@ -1,38 +1,37 @@
-//! The `torrentds` command-line entrypoint — a dependency-free port of the Python
-//! CLI (`legacy-python/torrentds/torrentds/cli.py`, `python3 -m torrentds`).
+//! The `torrentds` command-line entrypoint, a dependency-free port of the
+//! Python CLI (`python3 -m torrentds`).
 //!
-//! Six subcommands drive the library. `index` runs the DHT harvester ([`Indexer`])
-//! and periodically [`Store::snapshot`]s it to `--db`; `search` [`Store::restore`]s
-//! that snapshot and runs the no-JS [`SearchServer`]; `tracker` runs the HTTP +
-//! UDP BitTorrent trackers over a shared [`PeerStore`]; `stats` restores and
-//! prints the store statistics; `block` adds to the blocklist and purges matches;
-//! `backup` restores and writes a fresh snapshot to `--out`.
+//! Six subcommands drive the library. `index` runs the DHT harvester
+//! ([`Indexer`]) and regularly [`Store::snapshot`]s it to `--db`; `search`
+//! [`Store::restore`]s that snapshot and runs the no-JS [`SearchServer`];
+//! `tracker` runs the HTTP and UDP BitTorrent trackers over a shared
+//! [`PeerStore`]; `stats` prints the store statistics; `block` adds to the
+//! blocklist and purges matches; `backup` writes a fresh snapshot to `--out`.
 //!
-//! Unlike the Python engine there is no SQLite file: the whole persistence unit
-//! is a bencode snapshot blob, so `--db` is that blob's path (`Store::snapshot` /
-//! `Store::restore`) and `--peers-db` is the [`PeerStore`] snapshot's path.
+//! There is no SQLite file: the store is one bencode snapshot, so `--db` is
+//! that file's path (`Store::snapshot` / `Store::restore`) and `--peers-db`
+//! is the [`PeerStore`] snapshot's.
 //!
-//! The whole binary is gated behind the crate's `net` feature (see the `[[bin]]`
-//! `required-features` in `Cargo.toml`), so the default `torrentds` build stays a
-//! pure, zero-dependency library. Argument parsing is hand-rolled — no `clap`, no
-//! third-party crate — to keep that guarantee. Exit codes match argparse: `0`
-//! success (or `--help`/`--version`), `1` a runtime failure, `2` a usage error.
+//! The binary needs the crate's `net` feature (`required-features` on the
+//! `[[bin]]` in `Cargo.toml`), so the default build stays a pure library with
+//! no dependencies. Argument parsing is hand-written, no `clap`. Exit codes
+//! match argparse: `0` success (or `--help`/`--version`), `1` a runtime
+//! failure, `2` a usage error.
 //!
-//! # Documented divergences from the Python CLI
+//! # Differences from the Python CLI
 //!
-//! * **`search --trackers`** (remote scrape aggregation across foreign trackers)
-//!   is not ported: the Rust crate has no outbound scrape client. Swarm health is
-//!   instead folded in from this deployment's own tracker via `--peers-db`, which
-//!   reads the snapshot the `tracker` subcommand writes.
-//! * **Shutdown is not signal-driven.** `tokio` is built here without its
-//!   `signal` feature (it would add third-party crates to the audited dependency
-//!   closure), so `index` cannot save state from a `SIGINT` handler the way the
-//!   Python CLI does. It instead persists the store every `--save-interval`
-//!   seconds, so terminating the process loses at most one interval of harvest.
-//! * `index` prints the primary node's bound address where Python prints its
+//! * **`search --trackers`** (scraping other trackers) isn't ported: there's
+//!   no outbound scrape client. Swarm health comes from this deployment's own
+//!   tracker instead, through `--peers-db`, which reads the snapshot the
+//!   `tracker` subcommand writes.
+//! * **No signal handling.** tokio is built without its `signal` feature (it
+//!   would add crates to the audited closure), so `index` can't save from a
+//!   `SIGINT` handler. It saves every `--save-interval` seconds instead, so
+//!   stopping the process loses at most one interval of harvest.
+//! * `index` prints the primary node's bound address, where Python prints its
 //!   hex node id (the id is internal to [`Indexer`]).
-//! * `backup` refuses to overwrite an existing destination or a URI-looking one,
-//!   matching the `websearch` CLI's guards.
+//! * `backup` refuses to overwrite an existing destination or a URI-looking
+//!   one, like the `websearch` CLI.
 use std::io::ErrorKind;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
@@ -175,11 +174,9 @@ enum CliError {
 /// and exit codes — the point of routing them through one function rather than
 /// two copies of the parser that drift apart the first time a flag is added.
 pub fn run(args: impl Iterator<Item = String>) -> ExitCode {
-    // `--log-format` is handled before the subcommand parser so it works on
-    // every subcommand of every engine with one call site each, rather than
-    // being a flag an operator has to remember which subcommands happen to
-    // accept. It is removed from `argv`, so the parser below sees exactly the
-    // command line it saw before this flag existed.
+    // `--log-format` is handled before the subcommand parser, so it works on
+    // every subcommand, and it is removed from `argv`, so the parser below never
+    // sees it.
     let (log_format, argv) = match crawlcore::logfmt::take_format_flag(args.collect()) {
         Ok(v) => v,
         Err(msg) => {
@@ -1641,16 +1638,13 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// Regression: the snapshot write must be atomic. `std::fs::write` truncates
-    /// the destination and then streams into it, so anything reading (or the next
-    /// start-up) during a save can see a prefix — and `read_store` treats a
-    /// snapshot it cannot decode as a hard error, so `index` and `search` both
-    /// refuse to start with the index gone (an 89 MB snapshot truncated at 5 %,
-    /// 50 % and 99.9 % gave `Store::restore == None` every time). Here a reader
-    /// thread re-reads the snapshot, yielding between reads, while the writer
-    /// rewrites a ~1 MB one 30 times: with a rename it can never observe a
-    /// partial file. The read count is asserted too, because "no torn read" is
-    /// only worth something if reads actually happened during the writes.
+    /// The snapshot write must be atomic. `std::fs::write` truncates and then
+    /// writes, so a reader (or the next start) during a save could see a prefix,
+    /// and `read_store` treats an undecodable snapshot as fatal: `index` and
+    /// `search` would refuse to start. Here a reader thread keeps re-reading the
+    /// snapshot while the writer rewrites a ~1 MB one 30 times; with a rename it
+    /// never sees a partial file. The number of reads is asserted too, since "no
+    /// torn read" only counts if reads happened during the writes.
     #[test]
     fn write_store_is_atomic_under_a_concurrent_reader() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
