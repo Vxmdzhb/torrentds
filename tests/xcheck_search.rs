@@ -149,6 +149,18 @@ async fn search_server_round_trip() {
     let text = String::from_utf8_lossy(&body);
     assert!(text.contains("\"total\":1"), "api/search body: {text}");
     assert!(text.contains("Ubuntu 22.04 Desktop"));
+    // ...and leaves out the file list unless asked for it
+    assert!(!text.contains("\"files\""), "api/search body: {text}");
+    let (_h, body) = http_get(addr, "/api/search?q=ubuntu&files=5").await;
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("\"first_seen\":1000"),
+        "api/search?files body: {text}"
+    );
+    assert!(
+        text.contains("\"files\":[{\"path\":"),
+        "api/search?files body: {text}"
+    );
 
     // HTML detail
     let (head, body) = http_get(addr, &format!("/t/{ih_hex}")).await;

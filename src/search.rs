@@ -1214,7 +1214,40 @@ impl SearchServer {
             )
         };
         let sw = self.swarm_for(results.iter().map(|r| r.infohash.clone()));
-        let rows: Vec<String> = results.iter().map(|r| api_row(r, &sw)).collect();
+        // `files=N` (1..=20) adds each result's first N files and when it was
+        // first and last seen, so a client can show a result the way a detail
+        // page would without one request per result. Without it the rows are
+        // exactly as before.
+        let files_n = clamp_int(p.get("files"), 0, 0, 20);
+        let rows: Vec<String> = if files_n == 0 {
+            results.iter().map(|r| api_row(r, &sw)).collect()
+        } else {
+            let store = self.store.lock().unwrap();
+            results
+                .iter()
+                .map(|r| {
+                    let mut row = api_row(r, &sw);
+                    if let Some(t) = store.get(&r.infohash) {
+                        row.pop(); // drop the closing brace to append the extra fields
+                        let files: Vec<String> = t
+                            .files
+                            .iter()
+                            .take(files_n)
+                            .map(|(pth, l)| {
+                                format!("{{\"path\":{},\"length\":{}}}", json_str(pth), l)
+                            })
+                            .collect();
+                        row.push_str(&format!(
+                            ",\"first_seen\":{},\"last_seen\":{},\"files\":[{}]}}",
+                            t.first_seen,
+                            t.last_seen,
+                            files.join(",")
+                        ));
+                    }
+                    row
+                })
+                .collect()
+        };
         let has_more = offset + results.len() < total;
         let next = if offset + limit < total {
             format!("{}", offset + limit)
