@@ -456,6 +456,7 @@ pub fn render_detail(t: &TorrentRecord, has_torrent: bool, sw: &Swarm) -> Vec<u8
     };
     let mut p = String::new();
     p.push_str("<!doctype html><html><head><meta charset=utf-8>");
+    p.push_str("<meta name=viewport content='width=device-width,initial-scale=1'>");
     p.push_str(&format!(
         "<title>{}</title><style>{PAGE_CSS}</style></head><body>",
         esc(name)

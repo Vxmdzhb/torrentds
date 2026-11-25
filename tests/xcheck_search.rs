@@ -166,6 +166,7 @@ async fn search_server_round_trip() {
     let (head, body) = http_get(addr, &format!("/t/{ih_hex}")).await;
     assert!(head.starts_with("HTTP/1.1 200"));
     assert!(String::from_utf8_lossy(&body).contains("Ubuntu 22.04 Desktop"));
+    assert!(String::from_utf8_lossy(&body).contains("width=device-width"));
 
     // rebuilt .torrent hashes back to the infohash
     let (head, body) = http_get(addr, &format!("/torrent/{ih_hex}.torrent")).await;
